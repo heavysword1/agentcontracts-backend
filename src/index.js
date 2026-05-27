@@ -9,6 +9,8 @@ const { HTTPFacilitatorClient } = require('@x402/core/server');
 const { router: searchRouter } = require('./routes/search');
 const { router: awardsRouter } = require('./routes/awards');
 const { router: grantsRouter, bazaarInfo: grantsBazaar } = require('./routes/grants');
+const spendingRouter = require('./routes/spending');
+const mcpRouter = require('./routes/mcp');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -69,6 +71,7 @@ try {
           description: 'Search active US government contract opportunities on SAM.gov',
           extensions: {
             bazaar: { info: {
+              description: 'Search 35,000+ active US federal contract opportunities from SAM.gov. Filter by keyword, NAICS code, set-aside type, and agency.',
               input: {
                 type: 'http', method: 'GET',
                 queryParams: { keyword: 'software development', naics: '541511', limit: '10', set_aside: 'SBA' },
@@ -101,11 +104,34 @@ try {
           mimeType: 'application/json'
         },
 
+        'GET /x402/spending': {
+          accepts: [{ scheme: 'exact', price: '$0.01', network: X402_NETWORK, payTo: PAY_TO }],
+          description: 'Search federal award spending data from USAspending.gov. Find awards by keyword, recipient company, or agency.',
+          extensions: { bazaar: { info: {
+            description: 'Federal award spending data from USAspending.gov. Search by keyword, recipient company, or agency. Returns award amounts, recipients, and agencies.',
+            input: { type: 'http', method: 'GET',
+              queryParams: { type: 'awards', keyword: 'artificial intelligence', recipient: 'Microsoft', agency: 'Department of Defense', min_amount: '1000000', limit: '10' },
+              schema: { properties: {
+                type: { type: 'string', description: 'awards (search by keyword), recipient (company history), or agency (spending breakdown)' },
+                keyword: { type: 'string', description: 'Search keyword for award descriptions' },
+                recipient: { type: 'string', description: 'Company/recipient name (required for type=recipient)' },
+                agency: { type: 'string', description: 'Awarding agency name filter' },
+                min_amount: { type: 'string', description: 'Minimum award amount in USD' },
+                limit: { type: 'string', description: 'Number of results (max 25)' },
+                year: { type: 'string', description: 'Fiscal year (default: current)' }
+              }, required: [] }
+            },
+            output: { example: { success: true, type: 'federal_awards', count: 3, awards: [{ recipient: 'Microsoft Corporation', amount: 220450481, agency: 'Department of Defense', date: '2026-01-15', description: 'Cloud services and software...' }] } }
+          }}},
+          mimeType: 'application/json'
+        },
+
         'GET /x402/grants/search': {
           accepts: [{ scheme: 'exact', price: '$0.01', network: X402_NETWORK, payTo: PAY_TO }],
           description: 'Search active US federal grant opportunities on Grants.gov',
           extensions: {
             bazaar: { info: {
+              description: 'Search active US federal grant opportunities from Grants.gov. Filter by eligibility type, funding category, and award amount.',
               input: grantsBazaar.input,
               output: grantsBazaar.output
             }}
@@ -118,6 +144,7 @@ try {
           description: 'Historical US federal contract award data and price intelligence from SAM.gov',
           extensions: {
             bazaar: { info: {
+              description: 'Historical US federal contract award data with price intelligence. Returns past award amounts, awardees, and pricing analysis.',
               input: {
                 type: 'http', method: 'GET',
                 queryParams: { naics: '541511', keyword: 'software development', limit: '10', agency: 'DEPT OF DEFENSE' },
@@ -175,10 +202,33 @@ try {
   console.error('x402 init failed:', err.message);
 }
 
+// OpenAPI spec
+app.get('/openapi.json', (req, res) => res.sendFile(require('path').join(__dirname, 'openapi.json')));
+
+// Favicon
+app.get('/favicon.ico', (req, res) => res.redirect('https://memoryapi.org/favicon.ico'));
+
+// Smithery OAuth discovery — indicates no auth required
+app.get('/.well-known/oauth-protected-resource', (req, res) => {
+  res.json({
+    resource: 'https://contracts.memoryapi.org/mcp',
+    authorization_servers: [],
+    bearer_methods_supported: [],
+    resource_documentation: 'https://memoryapi.org'
+  });
+});
+
+app.get('/.well-known/oauth-authorization-server', (req, res) => {
+  res.status(404).json({ error: 'No OAuth authorization server — this MCP server requires no authentication.' });
+});
+
+
 // Mount routers
 app.use('/x402/contracts/search', searchRouter);
 app.use('/x402/contracts/awards', awardsRouter);
 app.use('/x402/grants/search', grantsRouter);
+app.use('/x402/spending', spendingRouter);
+app.use('/mcp', mcpRouter);
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found', service: 'AgentContracts' });
